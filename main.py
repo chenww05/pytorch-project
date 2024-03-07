@@ -1,81 +1,73 @@
+# Create the training data
+training_data = '. '.join([
+    'cats rule the world',
+    'dogs are the best',
+    'elephants have long trunks',
+    'monkeys like bananas',
+    'pandas eat bamboo',
+    'tigers are dangerous',
+    'zebras have stripes',
+    'lions are the kings of the savannah',
+    'giraffes have long necks',
+    'hippos are big and scary',
+    'rhinos have horns',
+    'penguins live in the arctic',
+    'polar bears are white'
+])
+
+# batch size = 8, more memory usage
+# epoch = 50
+def tokenize_and_pad_training_data(max_sequence_length, tokenizer, training_data):
+    # Tokenize the training data
+    tokenized_training_data = tokenizer.tokenize(training_data)
+    for _ in range(max_sequence_length):
+        # Prepend padding tokens
+        tokenized_training_data.insert(0, tokenizer.character_to_token('<pad>'))
+    return tokenized_training_data
+
+def create_training_sequences(max_sequence_length, tokenized_training_data):
+    # Create sequences of length max_sequence_length + 1
+    # The last token of each sequence is the target token
+    sequences = []
+    for i in range(0, len(tokenized_training_data) - max_sequence_length - 1):
+        sequences.append(tokenized_training_data[i: i + max_sequence_length + 1])
+    return sequences
+
 import torch
-from torch import nn
-from torch.utils.data import DataLoader
-from torchvision import datasets
-from torchvision.transforms import ToTensor
+from generator import Generator
+from model import LanguageModel
+from tokenizer import Tokenizer
+from trainer import Trainer
+from wrapper import AutoregressiveWrapper
 
-training_data = datasets.FashionMNIST(
-    root="data",
-    train=True,
-    download=True,
-    transform=ToTensor(),
+tokenizer = Tokenizer()    
+tokenized_training_data = tokenizer.tokenize(training_data)
+embedding_dimension = 256
+max_sequence_length = 20
+number_of_tokens = tokenizer.size()
+tokenized_and_padded_training_data = tokenize_and_pad_training_data(max_sequence_length, tokenizer, training_data)
+
+sequences = create_training_sequences(max_sequence_length, tokenized_and_padded_training_data)
+
+# Create the model
+model = AutoregressiveWrapper(LanguageModel(
+    embedding_dimension=embedding_dimension,
+    number_of_tokens=number_of_tokens,
+    number_of_heads=4,
+    number_of_layers=3,
+    dropout_rate=0.1,
+    max_sequence_length=max_sequence_length
+))
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+trainer = Trainer(model, tokenizer, optimizer)
+trainer.train(sequences, epochs=100, batch_size=8)
+
+max_tokens_to_generate = 50
+generator = Generator(model, tokenizer)
+generated_text = generator.generate(
+    max_tokens_to_generate=max_tokens_to_generate,
+    prompt="elephants",
+    padding_token=tokenizer.character_to_token('<pad>')
 )
-
-test_data = datasets.FashionMNIST(
-    root="data",
-    train=False,
-    download=True,
-    transform=ToTensor(),
-)
-
-batch_size = 64
-
-# Create data loaders.
-train_dataloader = DataLoader(training_data, batch_size=batch_size)
-test_dataloader = DataLoader(test_data, batch_size=batch_size)
-
-for X, y in test_dataloader:
-    print(f"Shape of X [N, C, H, W]; {X.shape}")
-    print(f"Shape of y: {y.shape} {y.dtype}")
-    break
-
-device = (
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(f"Using {device} device")
-
-
-# Define model
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28*28, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 10),
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
-    
-model = NeuralNetwork().to(device)
-print(model)
-
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
-
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
-    print(f"size = {size}")
-    model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
-
-        # Compute prediction error
-        pred = model(X)
-        loss = loss_fn(pred, y)
-
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-
-        if batch % 100 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f} [{current:>5d} / {size:>5d}]")
+print(generated_text.replace('<pad>', ''))
